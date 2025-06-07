@@ -66,11 +66,17 @@ python main.py --popular-only
 # Process all Steam apps with a limit
 python main.py --full --max-apps 5000
 
-# Filter apps to focus on those likely to have price data
-python main.py --filter-likely
+# Disable API-based filtering (not recommended)
+python main.py --no-filter
 
-# Use API-based filtering (more accurate but slower)
-python main.py --filter-api --api-sample 200
+# Adjust the number of apps to sample for API filtering
+python main.py --api-sample 200
+
+# Use detailed filtering to check each app (most accurate but slowest)
+python main.py --filter-detailed --detailed-limit 5000
+
+# Include free games in the results (default is paid games only)
+python main.py --filter-detailed --include-free
 ```
 
 
@@ -110,6 +116,7 @@ The scripts will:
 ## Output Files
 
 - `output/apps.json` - Complete list of Steam apps
+- `output/filtered_apps.json` - Filtered list of valid apps with price data
 - `output/prices.json` - Price data for all apps
 - `output/exchange_rates.json` - Current exchange rates
 - `output/steam_prices_full.csv` - CSV export of all prices

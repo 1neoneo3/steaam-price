@@ -2,6 +2,7 @@
 """Main script for the Steam Price Fetcher."""
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 from steam_price.apps import (
     fetch_all_steam_apps,
     filter_apps_by_api_details,
-    filter_likely_priced_apps,
+    filter_apps_with_details,
 )
 from steam_price.dataframe import (
     analyze_region_price_differences,
@@ -77,20 +78,26 @@ def parse_args():
         help=f'Maximum number of apps to process (default: {MAX_APPS})',
     )
     parser.add_argument(
-        '--filter-likely',
+        '--no-filter',
         action='store_true',
-        help='Filter apps to only include those likely to have price data (using heuristics)',
+        help='Disable API-based filtering of apps (not recommended)',
     )
     parser.add_argument(
-        '--filter-api',
+        '--filter-detailed',
         action='store_true',
-        help='Filter apps using detailed API calls (more accurate but slower)',
+        help='Filter apps by checking details for each app (most accurate but slowest)',
     )
     parser.add_argument(
         '--api-sample',
         type=int,
-        default=100,
-        help='Number of apps to sample for API filtering (default: 100)',
+        default=1000,
+        help='Number of apps to sample for API filtering (default: 1000)',
+    )
+    parser.add_argument(
+        '--detailed-limit',
+        type=int,
+        default=2000,
+        help='Maximum number of apps to check in detailed filtering (default: 2000)',
     )
     parser.add_argument(
         '--min-appid', type=int, help='Minimum app ID to include (useful for filtering)'
@@ -185,9 +192,11 @@ def main():
     limit_count = args.limit
     process_all = args.full
     max_apps = args.max_apps
-    filter_likely = args.filter_likely
-    filter_api = args.filter_api
+    no_filter = args.no_filter
+    filter_api = not args.no_filter
+    filter_detailed = args.filter_detailed
     api_sample_size = args.api_sample
+    detailed_limit = args.detailed_limit
     min_appid = args.min_appid
     max_appid = args.max_appid
     include_free = args.include_free
@@ -236,19 +245,41 @@ def main():
                 f'After ID filtering: {len(all_apps)} apps (removed {initial_count - len(all_apps)} apps)'
             )
 
-        # Apply pre-filtering using API details (more accurate but slower)
-        if filter_api:
+        # Apply detailed filtering (most accurate but slowest)
+        if filter_detailed:
+            logger.info(
+                f'Applying detailed filtering to find valid apps (checking up to {detailed_limit} apps)'
+            )
+            filtered_apps_file = OUTPUT_DIR / 'filtered_apps.json'
+            
+            # Check if we already have filtered apps saved
+            if filtered_apps_file.exists():
+                logger.info(f'Found existing filtered apps file at {filtered_apps_file}')
+                with open(filtered_apps_file, 'r') as f:
+                    all_apps = json.load(f)
+                logger.info(f'Loaded {len(all_apps)} pre-filtered apps from file')
+            else:
+                # Perform detailed filtering
+                all_apps = filter_apps_with_details(
+                    all_apps, 
+                    batch_size=batch_size, 
+                    total_apps_to_check=detailed_limit,
+                    include_free=include_free
+                )
+                # Save filtered apps for future use
+                with open(filtered_apps_file, 'w') as f:
+                    json.dump(all_apps, f, indent=2)
+                logger.info(f'Saved {len(all_apps)} filtered apps to {filtered_apps_file}')
+                
+            logger.info(f'After detailed filtering: {len(all_apps)} valid apps')
+                
+        # Apply API-based filtering by default, unless specifically disabled or detailed filtering is used
+        elif filter_api:
             logger.info(
                 f'Applying API-based filtering to find apps with price data (sample size: {api_sample_size})'
             )
-            all_apps = filter_apps_by_api_details(all_apps, sample_size=api_sample_size)
+            all_apps = filter_apps_by_api_details(all_apps, sample_size=api_sample_size, include_free=include_free)
             logger.info(f'After API filtering: {len(all_apps)} apps with confirmed price data')
-
-        # Apply pre-filtering using heuristics (faster but less accurate)
-        elif filter_likely:
-            logger.info('Applying heuristic pre-filtering to find apps likely to have price data')
-            all_apps = filter_likely_priced_apps(all_apps)
-            logger.info(f'After filtering: {len(all_apps)} apps likely to have price data')
 
         # Define the list of popular game IDs - these are known to have price data
         popular_app_ids = [

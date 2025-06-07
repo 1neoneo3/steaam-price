@@ -3,6 +3,7 @@
 import json
 import re
 import time
+import random
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
 
@@ -63,7 +64,7 @@ def fetch_app_details(app_id: int, country_code: str = DEFAULT_COUNTRY_CODE) -> 
         return None
 
 
-def get_app_details_batch(app_ids: List[int], batch_size: int = 10, 
+def get_app_details_batch(app_ids: List[int], batch_size: int = 100, 
                           country_code: str = DEFAULT_COUNTRY_CODE) -> Dict[int, Dict[str, Any]]:
     """Fetch details for a batch of apps with rate limiting.
     
@@ -107,6 +108,9 @@ def filter_apps_by_api_details(apps: List[Dict[str, Any]],
                                include_free: bool = False) -> List[Dict[str, Any]]:
     """Filter apps by fetching detailed information from Steam API.
     
+    This is the recommended filtering method as it provides a good balance
+    between accuracy and API usage.
+    
     Args:
         apps: List of all Steam apps
         sample_size: Maximum number of apps to check (for efficiency)
@@ -144,7 +148,7 @@ def filter_apps_by_api_details(apps: List[Dict[str, Any]],
     logger.info(f"Selected {len(app_ids)} apps for API detail checking")
     
     # Fetch details for the sample
-    app_details = get_app_details_batch(app_ids, batch_size=10, country_code=country_code)
+    app_details = get_app_details_batch(app_ids, batch_size=100, country_code=country_code)
     
     # Filter apps based on their details
     priced_apps = []
@@ -211,22 +215,32 @@ def filter_apps_by_api_details(apps: List[Dict[str, Any]],
         return priced_apps
 
 
-def filter_likely_priced_apps(apps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Filter apps to include only those likely to have price data.
+
+
+def filter_apps_with_details(all_apps: List[Dict[str, Any]], 
+                            country_code: str = DEFAULT_COUNTRY_CODE,
+                            batch_size: int = 20,
+                            total_apps_to_check: int = 2000,
+                            include_free: bool = False) -> List[Dict[str, Any]]:
+    """Filter apps by checking detailed information for each app.
     
-    This uses heuristics rather than API calls, which is faster but less accurate.
+    This function checks each app's details from the Steam API to determine:
+    - If it's a game that exists and can be retrieved
+    - If it has price data (not free unless include_free is True)
+    - If it's not discontinued/removed from store
     
     Args:
-        apps: List of all Steam apps
+        all_apps: List of all Steam apps
+        country_code: Country code for regional pricing
+        batch_size: Number of apps to process in each batch
+        total_apps_to_check: Maximum number of apps to check in total
+        include_free: Whether to include free apps in the results
         
     Returns:
-        Filtered list of apps that are likely to have price data
+        Filtered list of apps with valid price data
     """
-    filtered_apps = []
-    
-    # Count before filtering
-    total_apps = len(apps)
-    logger.info(f"Filtering {total_apps} apps using heuristics")
+    # Prioritize apps in known game ID ranges
+    logger.info(f"Applying initial filtering to {len(all_apps)} apps")
     
     # Common app ID ranges for games with price data
     likely_game_ranges = [
@@ -247,7 +261,9 @@ def filter_likely_priced_apps(apps: List[Dict[str, Any]]) -> List[Dict[str, Any]
         'sdk', 'dlc', 'tool', 'content pack', 'artbook', 'manual'
     ]
     
-    for app in apps:
+    # Apply basic filtering
+    likely_apps = []
+    for app in all_apps:
         app_id = int(app['appid'])
         name = app['name'].lower()
         
@@ -263,12 +279,93 @@ def filter_likely_priced_apps(apps: List[Dict[str, Any]]) -> List[Dict[str, Any]
         
         # Include if either condition is met
         if has_game_keyword or is_in_likely_range:
-            filtered_apps.append(app)
+            likely_apps.append(app)
+            
+    logger.info(f"Initial filtering: {len(likely_apps)} apps selected out of {len(all_apps)}")
     
-    logger.info(f"Filtered down to {len(filtered_apps)} likely apps with price data")
-    logger.info(f"Removed {total_apps - len(filtered_apps)} apps unlikely to have price data")
+    # Limit the number of apps to check to avoid excessive API calls
+    apps_to_check = likely_apps[:min(len(likely_apps), total_apps_to_check)]
+    logger.info(f"Will check details for {len(apps_to_check)} apps in batches of {batch_size}")
     
-    return filtered_apps
+    valid_apps = []
+    invalid_apps = []
+    free_apps = []
+    discontinued_apps = []
+    app_types = {}
+    
+    # Process in batches
+    for i in range(0, len(apps_to_check), batch_size):
+        batch = apps_to_check[i:i + batch_size]
+        logger.info(f"Processing batch {i//batch_size + 1}/{(len(apps_to_check) + batch_size - 1)//batch_size}: {len(batch)} apps")
+        
+        for app in batch:
+            app_id = int(app['appid'])
+            app_name = app['name']
+            details = fetch_app_details(app_id, country_code)
+            
+            if details is None:
+                # App couldn't be retrieved
+                invalid_apps.append(app)
+                logger.debug(f"App {app_id} ({app_name}) couldn't be retrieved")
+                continue
+                
+            # Check app type
+            app_type = details.get('type', '').lower()
+            if app_type in app_types:
+                app_types[app_type] += 1
+            else:
+                app_types[app_type] = 1
+                
+            # Check if it's a game
+            if app_type != 'game':
+                invalid_apps.append(app)
+                logger.debug(f"App {app_id} ({app_name}) is not a game, type: {app_type}")
+                continue
+                
+            # Check if the game is free
+            is_free = details.get('is_free', False)
+            if is_free:
+                free_apps.append(app)
+                logger.debug(f"App {app_id} ({app_name}) is free")
+                if not include_free:
+                    continue
+                    
+            # Check if the game has price data
+            has_price = 'price_overview' in details
+            if not has_price and not is_free:
+                # No price data and not marked as free (might be discontinued)
+                discontinued_apps.append(app)
+                logger.debug(f"App {app_id} ({app_name}) has no price data and is not marked as free")
+                continue
+                
+            # This is a valid app
+            valid_apps.append(app)
+            
+            # Delay to avoid rate limiting
+            jitter = random.uniform(0.8, 1.2)
+            actual_delay = API_DELAY * jitter
+            time.sleep(actual_delay)
+            
+        # Log progress after each batch
+        logger.info(f"Progress: Found {len(valid_apps)} valid apps, {len(free_apps)} free apps, {len(invalid_apps)} invalid apps, {len(discontinued_apps)} discontinued apps")
+    
+    # Log app type distribution
+    logger.info(f"App type distribution:")
+    for app_type, count in sorted(app_types.items(), key=lambda x: x[1], reverse=True):
+        logger.info(f"  - {app_type}: {count}")
+    
+    # Determine the final list based on include_free flag
+    result_apps = valid_apps
+    if include_free:
+        # Include apps that are explicitly marked as free
+        result_apps = [app for app in valid_apps]
+        free_apps_not_in_valid = [app for app in free_apps if app not in valid_apps]
+        result_apps.extend(free_apps_not_in_valid)
+        
+    logger.info(f"Final filtered apps: {len(result_apps)} apps")
+    logger.info(f"Free apps: {len(free_apps)}, Invalid apps: {len(invalid_apps)}, Discontinued apps: {len(discontinued_apps)}")
+    
+    return result_apps
 
 
 def fetch_all_steam_apps(output_dir: Path) -> List[Dict[str, Any]]:
