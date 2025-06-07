@@ -22,7 +22,6 @@ from steam_price.dataframe import (
 from steam_price.exchange_rates import fetch_exchange_rates
 from steam_price.logger import get_logger
 from steam_price.multi_region import REGIONS, fetch_all_multi_region_prices
-from steam_price.prices import fetch_all_prices
 
 # Load environment variables
 load_dotenv()
@@ -48,9 +47,7 @@ logger = get_logger(__name__, LOG_DIR)
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Steam Price Fetcher')
-    parser.add_argument(
-        '--multi-region', action='store_true', help='Fetch prices from multiple regions'
-    )
+    # Multi-region flag removed as it's the default behavior now
     # Removed sample option
     parser.add_argument('--batch-size', type=int, help='Batch size for processing apps')
     parser.add_argument(
@@ -116,13 +113,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def fetch_single_region(all_apps, exchange_rates):
-    """Fetch prices from a single region (JP)."""
-    logger.info('Starting single-region price fetching process...')
-    prices = fetch_all_prices(all_apps, exchange_rates, OUTPUT_DIR, BATCH_SIZE)
-    logger.info(f'Retrieved prices for {len(prices)} apps')
-
-    return prices
+# Single region price fetching removed - using only multi-region functionality
 
 
 def fetch_multiple_regions(all_apps, selected_regions=None):
@@ -187,7 +178,6 @@ def main():
 
     # Parse command line arguments
     args = parse_args()
-    use_multi_region = args.multi_region
     popular_only = args.popular_only
     limit_count = args.limit
     process_all = args.full
@@ -204,10 +194,8 @@ def main():
 
     # Cache options removed
 
-    # Set batch size from args if provided
-    batch_size = args.batch_size if args.batch_size else BATCH_SIZE
-    if use_multi_region and not args.batch_size:
-        batch_size = MULTI_REGION_BATCH_SIZE
+    # Set batch size from args if provided, otherwise use multi-region batch size
+    batch_size = args.batch_size if args.batch_size else MULTI_REGION_BATCH_SIZE
 
     logger.info(f'Batch size: {batch_size}')
 
@@ -382,18 +370,8 @@ def main():
         logger.info(f'Processing {len(filtered_apps)} apps in total')
         all_apps = filtered_apps
 
-        # For single-region mode, we need exchange rates
-        if not use_multi_region:
-            # Fetch exchange rates
-            logger.info('Fetching exchange rates...')
-            exchange_rates = fetch_exchange_rates(OUTPUT_DIR)
-            logger.info(f'Retrieved exchange rates for {len(exchange_rates)} currencies')
-
-            # Fetch prices from single region (JP)
-            prices = fetch_single_region(all_apps, exchange_rates)
-        else:
-            # Fetch prices from multiple regions
-            prices = fetch_multiple_regions(all_apps, args.regions)
+        # Always fetch prices from multiple regions
+        prices = fetch_multiple_regions(all_apps, args.regions)
 
         elapsed_time = time.time() - start_time
         logger.info(f'Process completed in {elapsed_time:.2f} seconds')
