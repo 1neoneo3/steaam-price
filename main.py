@@ -29,7 +29,6 @@ load_dotenv()
 # Configuration
 BATCH_SIZE = 50  # Reduced batch size to avoid rate limits
 MULTI_REGION_BATCH_SIZE = 25  # Smaller batch size for multi-region processing
-MAX_APPS = 1000  # Maximum number of apps to process in a full run
 PROJECT_DIR = Path(__file__).parent
 OUTPUT_DIR = PROJECT_DIR / 'output'
 LOG_DIR = PROJECT_DIR / 'logs'
@@ -71,8 +70,7 @@ def parse_args():
     parser.add_argument(
         '--max-apps',
         type=int,
-        default=MAX_APPS,
-        help=f'Maximum number of apps to process (default: {MAX_APPS})',
+        help='Maximum number of apps to process',
     )
     parser.add_argument(
         '--no-filter',
@@ -356,9 +354,9 @@ def main():
                 logger.info(f'Processing all apps with limit of {max_apps}')
                 filtered_apps = sorted_apps[:max_apps]
             else:
-                # Default to MAX_APPS
-                logger.info(f'Processing all apps with default limit of {MAX_APPS}')
-                filtered_apps = sorted_apps[:MAX_APPS]
+                # No default limit
+                logger.info('Processing all apps (no limit)')
+                filtered_apps = sorted_apps
 
             logger.warning('Processing all apps may take a very long time and hit API rate limits')
 
