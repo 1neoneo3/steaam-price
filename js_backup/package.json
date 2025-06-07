@@ -1,0 +1,18 @@
+{
+  "name": "steaam-price",
+  "version": "1.0.0",
+  "description": "Fetches Steam game prices and converts them between currencies",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["steam", "price", "currency", "games"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "node-fetch": "^3.3.2"
+  }
+}
